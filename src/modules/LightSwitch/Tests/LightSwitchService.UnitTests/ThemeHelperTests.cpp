@@ -32,6 +32,30 @@ namespace LightSwitchServiceUnitTests
                 RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
             }
         };
+
+        void SetDword(HKEY key, const wchar_t* name, DWORD value)
+        {
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, RegSetValueExW(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)));
+        }
+
+        LSTATUS GetDword(HKEY key, const wchar_t* name, DWORD& value)
+        {
+            DWORD size = sizeof(value);
+            return RegGetValueW(key, nullptr, name, RRF_RT_REG_DWORD, nullptr, &value, &size);
+        }
+
+        void AssertDword(HKEY key, const wchar_t* name, DWORD expected)
+        {
+            DWORD value = ~expected;
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, GetDword(key, name, value));
+            Assert::AreEqual(expected, value);
+        }
+
+        void AssertMissing(HKEY key, const wchar_t* name)
+        {
+            DWORD value = 0;
+            Assert::AreEqual<LSTATUS>(ERROR_FILE_NOT_FOUND, GetDword(key, name, value));
+        }
     }
 
     TEST_CLASS (ThemeHelperTests)
@@ -154,6 +178,97 @@ namespace LightSwitchServiceUnitTests
             RegCloseKey(writeOnly);
             Assert::AreEqual<LSTATUS>(ERROR_ACCESS_DENIED, result);
             Assert::IsTrue(enabled);
+        }
+
+        TEST_METHOD (AccentColorIsRememberedAndRestoredAcrossALightPeriod)
+        {
+            TemporaryRegistryKey personalization;
+            TemporaryRegistryKey state;
+            SetDword(personalization.key, L"ColorPrevalence", 1);
+
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::SaveAndResetColorPrevalence(personalization.key, state.key, false));
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+            AssertDword(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME, 1);
+
+            bool restored = false;
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::RestoreColorPrevalence(personalization.key, state.key, true, restored));
+            Assert::IsTrue(restored);
+            AssertDword(personalization.key, L"ColorPrevalence", 1);
+            AssertMissing(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME);
+
+            // The remembered value is consumed, so a second dark write does not restore again.
+            SetDword(personalization.key, L"ColorPrevalence", 0);
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::RestoreColorPrevalence(personalization.key, state.key, true, restored));
+            Assert::IsFalse(restored);
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+        }
+
+        TEST_METHOD (RepeatedLightWritesKeepTheRememberedAccentColor)
+        {
+            TemporaryRegistryKey personalization;
+            TemporaryRegistryKey state;
+            SetDword(personalization.key, L"ColorPrevalence", 1);
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::SaveAndResetColorPrevalence(personalization.key, state.key, false));
+
+            // Already light: the accent color is now off, which must not overwrite the remembered value.
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::SaveAndResetColorPrevalence(personalization.key, state.key, true));
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+            AssertDword(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME, 1);
+        }
+
+        TEST_METHOD (LeavingDarkWithTheAccentColorOffForgetsAnOlderRememberedValue)
+        {
+            TemporaryRegistryKey personalization;
+            TemporaryRegistryKey state;
+            SetDword(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME, 1);
+            SetDword(personalization.key, L"ColorPrevalence", 0);
+
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::SaveAndResetColorPrevalence(personalization.key, state.key, false));
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+            AssertMissing(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME);
+
+            bool restored = true;
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::RestoreColorPrevalence(personalization.key, state.key, true, restored));
+            Assert::IsFalse(restored);
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+        }
+
+        TEST_METHOD (DarkWritesWhileAlreadyDarkDoNotOverrideTheAccentColor)
+        {
+            TemporaryRegistryKey personalization;
+            TemporaryRegistryKey state;
+            SetDword(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME, 1);
+            SetDword(personalization.key, L"ColorPrevalence", 0);
+
+            bool restored = true;
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::RestoreColorPrevalence(personalization.key, state.key, false, restored));
+            Assert::IsFalse(restored);
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+            AssertMissing(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME);
+        }
+
+        TEST_METHOD (AccentColorIsStillTurnedOffWithoutAStateKey)
+        {
+            TemporaryRegistryKey personalization;
+            SetDword(personalization.key, L"ColorPrevalence", 1);
+
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, LightSwitchThemeHelpers::SaveAndResetColorPrevalence(personalization.key, nullptr, false));
+            AssertDword(personalization.key, L"ColorPrevalence", 0);
+        }
+
+        TEST_METHOD (FailedAccentColorRestoreKeepsTheRememberedValue)
+        {
+            TemporaryRegistryKey personalization;
+            TemporaryRegistryKey state;
+            SetDword(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME, 1);
+            HKEY readOnly = nullptr;
+            Assert::AreEqual<LSTATUS>(ERROR_SUCCESS, RegOpenKeyExW(HKEY_CURRENT_USER, personalization.path.c_str(), 0, KEY_QUERY_VALUE, &readOnly));
+            bool restored = true;
+            const auto result = LightSwitchThemeHelpers::RestoreColorPrevalence(readOnly, state.key, true, restored);
+            RegCloseKey(readOnly);
+            Assert::AreEqual<LSTATUS>(ERROR_ACCESS_DENIED, result);
+            Assert::IsFalse(restored);
+            AssertDword(state.key, RESTORE_COLOR_PREVALENCE_VALUE_NAME, 1);
         }
     };
 }
