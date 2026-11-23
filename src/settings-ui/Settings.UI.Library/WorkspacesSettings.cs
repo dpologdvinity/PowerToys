@@ -49,7 +49,7 @@ namespace Microsoft.PowerToys.Settings.UI.Library
             {
                 new HotkeyAccessor(
                     () => Properties.Hotkey.Value,
-                    value => Properties.Hotkey.Value = value ?? WorkspacesProperties.DefaultHotkeyValue,
+                    value => Properties.Hotkey.Value = value ?? WorkspacesProperties.GetDefaultHotkeyValue(),
                     "Workspaces_ActivationShortcut"),
             };
 

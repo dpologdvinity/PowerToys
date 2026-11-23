@@ -31,6 +31,20 @@ namespace
     const wchar_t JSON_KEY_RUN_SNAPSHOT_TOOL_HOTKEY[] = L"run-snapshot-tool-hotkey";
     const wchar_t JSON_KEY_RUN_LAUNCHER_HOTKEY[] = L"run-launcher-hotkey";
     const wchar_t JSON_KEY_VALUE[] = L"value";
+
+    // Scan code of the physical key below Esc (` ~ on US layouts). The default shortcut
+    // binds to this key rather than to a fixed virtual-key code, because its VK differs by
+    // layout: VK_OEM_3 on US, but VK_OEM_8 on UK where VK_OEM_3 is ' @.
+    constexpr UINT DEFAULT_HOTKEY_SCAN_CODE = 0x29;
+
+    // The key below Esc, resolved for the current keyboard layout. Falls back to VK_OEM_3 when
+    // that key is not an OEM character key (VK_OEM_1 through VK_OEM_102), e.g. on Japanese
+    // layouts, where it is the half-width/full-width IME toggle (VK_OEM_AUTO).
+    WORD ResolveDefaultHotkeyVirtualKey()
+    {
+        const UINT vk = MapVirtualKeyExW(DEFAULT_HOTKEY_SCAN_CODE, MAPVK_VSC_TO_VK, GetKeyboardLayout(0));
+        return static_cast<WORD>(vk >= VK_OEM_1 && vk <= VK_OEM_102 ? vk : VK_OEM_3);
+    }
 }
 
 BOOL APIENTRY DllMain(HMODULE /*hModule*/, DWORD ul_reason_for_call, LPVOID /*lpReserved*/)
@@ -363,7 +377,7 @@ private:
     // Hotkey to invoke the module
     HotkeyEx m_hotkey{
         .modifiersMask = MOD_CONTROL | MOD_WIN,
-        .vkCode = 0xC0, // VK_OEM_3 key; usually `~
+        .vkCode = ResolveDefaultHotkeyVirtualKey(), // The key below Esc; ` ~ on US layouts
     };
 };
 

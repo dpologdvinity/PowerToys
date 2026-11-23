@@ -129,7 +129,7 @@ namespace Microsoft.PowerToys.Settings.UI.ViewModels
                 {
                     if (value == null)
                     {
-                        _hotkey = WorkspacesProperties.DefaultHotkeyValue;
+                        _hotkey = WorkspacesProperties.GetDefaultHotkeyValue();
                     }
                     else
                     {
